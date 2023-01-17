@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Checkout / POS</title>
+    <!-- Add some CSS to change client UI -->
+    <style>
+    body {
+        background-color: #232F3E;
+	    color: #FF9900;
+	    text-align: center;
+    }
+    label, button {
+        color: #FF9900;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 15px;
+        margin-left: 40px;
+    }
+     input {
+        color: #232F3E;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 15px;
+        margin-left: 20px;
+    }
+    select {
+        color: #232F3E;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 15px;
+        margin-left: 20px;
+    }
+    pre {
+        white-space: pre-wrap;
+    }
+    table, th, td {
+        border: 1px solid black;
+        margin-left:auto;
+        margin-right:auto;
+    }
+    table.center {
+        width:50%; 
+        margin-left:auto; 
+        margin-right:auto;
+    }
+    #jsonOutput {
+        white-space: pre-line;
+    }
+    </style>
+    <script>
+        //function to generate unique order id
+        function uuidv4() {
+            return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
+        }        
+
+        // define the Rest Proxy API call
+        var callAPI = async (deviceID,customerPAN,amount,bfbCustomer)=>{
+            document.getElementById("jsonOutput").textContent = '';
+            document.getElementById("progressMsg").textContent = '';
+            var finalResult=[];
+            var finalResultStr='';
+            document.getElementById("finalResultT").style.display="none";
+            
+            // Prepare headers
+            var myHeaders = new Headers();
+            myHeaders.append("Content-Type", "application/json");
+
+            //unique order id
+            var orderId=uuidv4();
+            
+            // using built in JSON utility package turn object to string and store in a variable
+            var raw = JSON.stringify({"key":{"type": "JSON","data": deviceID},"value": {"type": "JSON","data": {"orderId":orderId,"customerPAN":customerPAN,"amount":+amount,"bfbCustomer":bfbCustomer}}});
+    
+            var requestOptions = {
+                method: 'POST',
+                headers: myHeaders,
+                body: raw,
+                redirect: 'follow'
+            };
+            // make API call with parameters and use promises to get response
+            fetch("https://fkk9eib4r4.execute-api.ap-south-1.amazonaws.com/dev/", requestOptions)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error("HTTP error " + response.status);
+                }
+                return response.text();
+                })
+            .then(text => { document.getElementById("jsonOutput").textContent = "Producer response: \n"+text; })
+            .catch(error => console.log('error', error));
+
+            document.getElementById("progressMsg").textContent = "Order ID: "+orderId+"  >> Eligibility check in progress...";
+            
+            //Polling for result. Ideally it should be a web scocket connection (where server pushes data to client)
+            const response = await fetchStatus(orderId);
+            console.log(response);
+            yArray=response.split("columnNames\":[\"CUSTOMERPAN\",\"ORDERID\",\"CUSTOMERNAME\",\"BNPLSTATUS\",\"AMOUNT\",\"MAXAMOUNT\",\"TYPE\"],\"columnTypes\":[\"STRING\",\"STRING\",\"STRING\",\"STRING\",\"DECIMAL(10, 2)\",\"DECIMAL(10, 2)\",\"STRING\"]}");
+            finalResultStr=yArray[1].substring(2,yArray[1].length-2);
+            finalResultStr=finalResultStr.replaceAll('"','');
+            finalResult=finalResultStr.split(",");
+            console.log("fn",finalResult);
+            document.getElementById("finalResultT").style.display="block";
+            document.getElementById("pan").innerHTML=finalResult[0];
+            document.getElementById("oid").innerHTML=finalResult[1];
+            document.getElementById("cn").innerHTML=finalResult[2];
+            document.getElementById("rs").innerHTML=finalResult[3];
+            document.getElementById("cr").innerHTML=finalResult[4];
+            document.getElementById("me").innerHTML=finalResult[5];
+
+        }
+
+        const fetchStatus = (orderId) => {
+            return new Promise((resolve)=>{
+                (async function requestStatus(){
+                    var ksqlHeaders = new Headers();
+                    ksqlHeaders.append("Content-Type", "application/json");
+                    ksqlHeaders.append("Accept","application/json");
+                    var kQuery ="SELECT * FROM  BNPL_RESPONSE_COMBINED_STREAM WHERE ORDERID=\'"+orderId+"\' LIMIT 1;";
+                    var ksqlRaw = JSON.stringify({"sql": kQuery});
+                    console.log(ksqlRaw);
+                    var ksqlRequestOptions = {
+                        method: 'POST',
+                        headers: ksqlHeaders,
+                        body: ksqlRaw,
+                        redirect: 'follow'
+                    }
+            
+                    const response= await fetch(" https://lpg0thepyb.execute-api.ap-south-1.amazonaws.com/dev", ksqlRequestOptions);
+                    const data = await response.text();
+                    xArray=data.split("columnNames\":[\"CUSTOMERPAN\",\"ORDERID\",\"CUSTOMERNAME\",\"BNPLSTATUS\",\"AMOUNT\",\"MAXAMOUNT\",\"TYPE\"],\"columnTypes\":[\"STRING\",\"STRING\",\"STRING\",\"STRING\",\"DECIMAL(10, 2)\",\"DECIMAL(10, 2)\",\"STRING\"]}");
+                    if (xArray.length==2 && xArray[1]!="]"){
+                        resolve(data);
+                    }
+                    else{
+                        setTimeout(()=>{
+                            requestStatus();
+                        },300);
+                    }
+                })();
+            })
+
+        };
+    </script>
+</head>
+<body>
+    <h1>BFB</h1>
+    <h2>BNPL Eligibilty Check @ Online Store Checkout OR POS Sale | Demo</h2>
+    <p>This page acts as a placeholder for payment gateway at checkout page or POS device at stores</p>
+    <br/>
+    <br/>
+    <form>
+        <label for="device-id">Choose a device (Simulation for key):</label>
+        <select name="device-id" id="device-id">
+            <option value="WEB001">WEB001</option>
+            <option value="WEB002">WEB002</option>
+            <option value="POS001">POS001</option>
+            <option value="POS002">POS002</option>
+            <option value="mPOS001">mPOS001</option>
+            <option value="mPOS002">mPOS002</option>
+        </select>
+        <br/>
+        <br/>
+        <br/>
+        <label>Customer PAN :</label>
+        <input type="text" id="customerPAN">
+	    <label>Sale Amount :</label>
+        <input type="text" id="amount">
+        <label for="bfbCustomer">BFB Customer? :</label>
+        <select name="bfbCustomer" id="bfbCustomer">
+            <option value="Yes">Yes</option>
+            <option value="No">No</option>
+        </select>
+        <!-- set button onClick method to call function we defined passing input values as parameters -->
+        <button type="button" onclick="callAPI(document.getElementById('device-id').value,document.getElementById('customerPAN').value,document.getElementById('amount').value,document.getElementById('bfbCustomer').value)">Check Eligibility</button>
+    </form>
+    <br/>
+    <br/>
+    <br/>
+    <p id="progressMsg"></p>
+    <br/>
+    <br/>
+    <br/>   
+    <pre id="jsonOutput"></pre>
+    <br/>
+    <br/>
+    <br/>
+    <table id="finalResultT" class="center">
+        <caption>Credit eligibility check result</caption>
+        <tr>
+          <th>Customer PAN</th>
+          <th>Order ID</th>
+          <th>Customer Name</th>
+          <th>BNPL Request Status</th>
+          <th>Credit Requested</th>
+          <th>Max Eligibility</th>
+        </tr>
+        <tr>
+          <td id="pan"></td>
+          <td id="oid"></td>
+          <td id="cn"></td>
+          <td id="rs"></td>
+          <td id="cr"></td>
+          <td id="me"></td>
+        </tr>
+      </table>
+      <script type="text/javascript">
+        document.getElementById("finalResultT").style.display="none";
+      </script>
+</body>
+</html>
